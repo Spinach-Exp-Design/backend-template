@@ -46,11 +46,12 @@ jobs:
 
       - name: Output Instance ID
         id: output-instance-id
-        run: 
+        run: |
           echo "instance_id=$(terraform output -raw instance_id)" >> $GITHUB_OUTPUT
+
       - name: Output ECR URI
         id: output-ecr-uri
-        run: 
+        run: |
           echo "ecr_uri=$(terraform output -raw repository_url)" >> $GITHUB_OUTPUT
 
   build-and-push:
@@ -69,7 +70,7 @@ jobs:
 
       - name: Echo Environment Variables
         run: |
-            echo "ecr_uri=${{ needs.terraform.outputs.ecr_uri }}"
+          echo "ecr_uri=${{ needs.terraform.outputs.ecr_uri }}"
 
       - name: Login to AWS ECR
         id: login-ecr
@@ -99,28 +100,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Echo Environment Variables
+      - name: Update ECS Service
         run: |
-          echo "INSTANCE_ID=${{ needs.terraform.outputs.instance_id }}"
-
-      - name: Execute Docker Commands on AWS Instance to Deploy the Application
-        run: |
-          command_id=$(aws ssm send-command \
-          --document-name "AWS-RunShellScript" \
-          --targets "Key=instanceIds,Values=${{ needs.terraform.outputs.instance_id }}" \
-          --parameters '{
-            "commands": [
-              "docker stop flask-app || true",
-              "docker rm flask-app || true",
-              "docker rmi ${{ needs.terraform.outputs.ecr_uri }}:latest || true",
-              "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ needs.terraform.outputs.ecr_uri }}",
-              "docker pull ${{ needs.terraform.outputs.ecr_uri }}:latest",
-              "docker run -d -p 5000:5000 --name flask-app ${{ needs.terraform.outputs.ecr_uri }}:latest"
-            ]}' \
-          --comment "Pull and run Docker image from ECR with the name flask-app on port 5000 check" --query 'Command.CommandId' --output text)
-      
-          echo "command_id=$command_id" >> $GITHUB_ENV
-
-      - name: Check Command Status
-        run: |
-          aws ssm list-command-invocations --command-id "${{ env.command_id }}" --details
+          aws ecs update-service \
+            --cluster ecs-cluster \
+            --service flask-service \
+            --force-new-deployment
